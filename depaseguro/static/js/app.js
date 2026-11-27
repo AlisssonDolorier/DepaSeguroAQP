@@ -46,18 +46,37 @@ function crearMapa(id, zoom) {
   return mapa;
 }
 
+function contenidoPopup(titulo, lineas, url) {
+  const caja = document.createElement('div');
+  const encabezado = document.createElement('b');
+  encabezado.textContent = titulo;
+  caja.append(encabezado);
+  lineas.forEach((linea) => {
+    if (linea) caja.append(document.createElement('br'), linea);
+  });
+  if (url) {
+    const enlace = document.createElement('a');
+    enlace.href = url;
+    enlace.textContent = 'Ver ficha';
+    caja.append(document.createElement('br'), enlace);
+  }
+  return caja;
+}
+
 async function iniciarMapaGeneral(id) {
   const mapa = crearMapa(id, 13);
   const respuesta = await fetch('/api/mapa');
   const datos = await respuesta.json();
   datos.campus.forEach((c) => {
     L.circleMarker([c.lat, c.lon], { radius: 7, color: '#22303c', fillColor: '#22303c', fillOpacity: .9 })
-      .bindPopup(`<b>${c.universidad}</b><br>Local ${c.local}<br>${c.licencia || ''}`).addTo(mapa);
+      .bindPopup(contenidoPopup(c.universidad, [`Local ${c.local}`, c.licencia])).addTo(mapa);
   });
   datos.avisos.forEach((a) => {
     const color = COLOR_NIVEL[a.nivel] || '#66717a';
+    const precio = a.precio === null ? a.distrito : `${a.distrito} · S/ ${Math.round(a.precio)}`;
+    const confianza = a.trust === null ? 'Sin evaluar' : `${a.nivel} (${a.trust} puntos)`;
     L.circleMarker([a.lat, a.lon], { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 })
-      .bindPopup(`<b>${a.titulo}</b><br>${a.distrito} · S/ ${Math.round(a.precio)}<br>${a.nivel} (${a.trust} puntos)<br><a href="${a.url}">Ver ficha</a>`)
+      .bindPopup(contenidoPopup(a.titulo, [precio, confianza], a.url))
       .addTo(mapa);
   });
 }
@@ -93,17 +112,22 @@ async function graficarSerie(id, url) {
   const respuesta = await fetch(url);
   const datos = await respuesta.json();
   const etiquetasFuturas = datos.proyeccion.map((_, i) => `+${i + 1} mes`);
-  const relleno = new Array(datos.valores.length - 1).fill(null);
-  const ultimo = datos.valores[datos.valores.length - 1];
+  const series = [
+    { label: 'Estafas denunciadas', data: datos.valores, borderColor: '#22303c', backgroundColor: '#22303c', tension: .25, pointRadius: 2 },
+  ];
+  if (datos.valores.length && datos.proyeccion.length) {
+    const relleno = new Array(datos.valores.length - 1).fill(null);
+    series.push({
+      label: 'Proyección', data: [...relleno, datos.valores.at(-1), ...datos.proyeccion],
+      borderColor: '#b4532a', backgroundColor: '#b4532a', borderDash: [6, 4], pointRadius: 3,
+    });
+  }
   if (contenedor._grafico) contenedor._grafico.destroy();
   contenedor._grafico = new Chart(contenedor, {
     type: 'line',
     data: {
       labels: [...datos.etiquetas, ...etiquetasFuturas],
-      datasets: [
-        { label: 'Estafas denunciadas', data: datos.valores, borderColor: '#22303c', backgroundColor: '#22303c', tension: .25, pointRadius: 2 },
-        { label: 'Proyección', data: [...relleno, ultimo, ...datos.proyeccion], borderColor: '#b4532a', backgroundColor: '#b4532a', borderDash: [6, 4], pointRadius: 3 },
-      ],
+      datasets: series,
     },
     options: { responsive: true, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } },
   });

@@ -35,14 +35,14 @@ def por_confianza(minimo):
 
 
 def por_radio(radio):
-    return lambda aviso: radio is None or aviso.get("distancia_km") is None or aviso["distancia_km"] <= radio
+    return lambda aviso: radio is None or (aviso["distancia_km"] is not None and aviso["distancia_km"] <= radio)
 
 
 def agregar_distancia(campus):
     """Devuelve una función que añade la distancia sin modificar el aviso original."""
 
     def transformar(aviso: dict) -> dict:
-        if not campus or aviso.get("lat") is None:
+        if not campus or aviso.get("lat") is None or aviso.get("lon") is None:
             return {**aviso, "distancia_km": None}
         return {**aviso, "distancia_km": distancia_km(aviso["lat"], aviso["lon"], campus["lat"], campus["lon"])}
 
@@ -75,7 +75,7 @@ ORDENES = {
 def buscar(avisos: list[dict], filtros: FiltrosBusqueda) -> list[dict]:
     clave, descendente = ORDENES.get(filtros.orden, ORDENES["compatibilidad"])
     condicion = todos(por_distrito(filtros.ubigeo), por_tipo(filtros.tipo), por_precio(filtros.precio_max),
-                      por_confianza(filtros.trust_min), por_radio(filtros.radio_km))
+                      por_confianza(filtros.trust_min), por_radio(filtros.radio_km if filtros.campus else None))
     return tubo(
         avisos,
         mapear(agregar_distancia(filtros.campus)),
@@ -86,7 +86,7 @@ def buscar(avisos: list[dict], filtros: FiltrosBusqueda) -> list[dict]:
 
 
 def campus_cercanos(aviso: dict, campus: list[dict], limite: int = 3) -> list[dict]:
-    if aviso.get("lat") is None:
+    if aviso.get("lat") is None or aviso.get("lon") is None:
         return []
     return tubo(
         campus,

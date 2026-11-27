@@ -1,7 +1,7 @@
 """DAOs concretos: cada clase concentra las consultas propias de una entidad."""
 from __future__ import annotations
 
-from .base import BaseDAO
+from .base import BaseDAO, confirmar, transaccion
 
 
 class UsuarioDAO(BaseDAO):
@@ -18,6 +18,18 @@ class DistritoDAO(BaseDAO):
 
     def todos(self) -> list[dict]:
         return [dict(f) for f in self.db.execute("SELECT * FROM distritos ORDER BY nombre")]
+
+    def con_avisos_publicos(self) -> list[dict]:
+        """Zonas que pueden producir resultados en el catálogo público."""
+        filas = self.db.execute(
+            """SELECT d.*, COUNT(i.id) AS avisos
+               FROM distritos d
+               JOIN inmuebles i ON i.ubigeo = d.ubigeo
+               WHERE i.estado IN ('publicado','observado')
+               GROUP BY d.ubigeo
+               ORDER BY d.nombre"""
+        )
+        return [dict(f) for f in filas]
 
 
 class CampusDAO(BaseDAO):
@@ -67,7 +79,7 @@ class InmuebleDAO(BaseDAO):
                    SELECT ?, id FROM servicios WHERE nombre = ?""",
                 (inmueble_id, nombre),
             )
-        self.db.commit()
+        confirmar(self.db)
 
     def precios_comparables(self, inmueble_id: int, tipo: str, ubigeo: str | None = None) -> list[float]:
         """Precios por m² de avisos del mismo tipo, excluyendo el aviso evaluado."""
@@ -90,19 +102,27 @@ class ImagenDAO(BaseDAO):
 
     def de_otros_arrendadores(self, inmueble_id: int, arrendador_id: int) -> list[dict]:
         filas = self.db.execute(
-            """SELECT g.*, i.titulo, i.arrendador_id FROM imagenes g
+            """SELECT g.*, CASE WHEN i.estado IN ('publicado','observado') THEN i.titulo END AS titulo,
+                      i.arrendador_id FROM imagenes g
                JOIN inmuebles i ON i.id = g.inmueble_id
                WHERE g.inmueble_id != ? AND i.arrendador_id != ?""",
             (inmueble_id, arrendador_id),
         )
         return [dict(f) for f in filas]
 
-    def todas(self) -> list[dict]:
+    def publicas(self) -> list[dict]:
         filas = self.db.execute(
-            """SELECT g.*, i.arrendador_id, i.titulo FROM imagenes g
-               JOIN inmuebles i ON i.id = g.inmueble_id"""
+            """SELECT g.*, i.titulo FROM imagenes g JOIN inmuebles i ON i.id = g.inmueble_id
+               WHERE i.estado IN ('publicado','observado')"""
         )
         return [dict(f) for f in filas]
+
+    def aviso_de_archivo(self, archivo: str) -> dict | None:
+        fila = self.db.execute(
+            """SELECT i.arrendador_id, i.estado FROM imagenes g JOIN inmuebles i ON i.id = g.inmueble_id
+               WHERE g.archivo = ?""", (archivo,)
+        ).fetchone()
+        return dict(fila) if fila else None
 
 
 class DocumentoDAO(BaseDAO):
@@ -196,7 +216,7 @@ class AlertaDAO(BaseDAO):
                VALUES (?,?,?,?,?,?)""",
             (usuario_id, inmueble_id, tipo, severidad, mensaje, clave),
         )
-        self.db.commit()
+        confirmar(self.db)
         return cursor.rowcount > 0
 
     def de_usuario(self, usuario_id: int, limite: int = 50) -> list[dict]:
@@ -219,22 +239,20 @@ class FavoritoDAO(BaseDAO):
     tabla = "favoritos"
 
     def alternar(self, usuario_id: int, inmueble_id: int) -> bool:
-        existente = self.db.execute(
-            "SELECT 1 FROM favoritos WHERE usuario_id = ? AND inmueble_id = ?", (usuario_id, inmueble_id)
-        ).fetchone()
-        if existente:
-            self.db.execute("DELETE FROM favoritos WHERE usuario_id = ? AND inmueble_id = ?",
-                            (usuario_id, inmueble_id))
-        else:
-            self.db.execute("INSERT INTO favoritos(usuario_id, inmueble_id) VALUES (?,?)",
-                            (usuario_id, inmueble_id))
-        self.db.commit()
-        return not existente
+        with transaccion(self.db):
+            borrado = self.db.execute(
+                "DELETE FROM favoritos WHERE usuario_id = ? AND inmueble_id = ?", (usuario_id, inmueble_id)
+            ).rowcount
+            if not borrado:
+                self.db.execute("INSERT INTO favoritos(usuario_id, inmueble_id) VALUES (?,?)",
+                                (usuario_id, inmueble_id))
+        return not borrado
 
     def de_usuario(self, usuario_id: int) -> list[dict]:
         filas = self.db.execute(
             """SELECT v.* FROM v_inmuebles v JOIN favoritos f ON f.inmueble_id = v.id
-               WHERE f.usuario_id = ? ORDER BY f.creado_en DESC""",
+               WHERE f.usuario_id = ? AND v.estado IN ('publicado','observado')
+               ORDER BY f.creado_en DESC""",
             (usuario_id,),
         )
         return [dict(f) for f in filas]
@@ -286,8 +304,10 @@ class IndicadorDAO(BaseDAO):
         )
 
     def ultimo(self, clave: str) -> dict | None:
-        filas = self.serie(clave)
-        return filas[-1] if filas else None
+        fila = self.db.execute(
+            "SELECT * FROM indicadores WHERE clave = ? ORDER BY periodo DESC LIMIT 1", (clave,)
+        ).fetchone()
+        return dict(fila) if fila else None
 
     def serie(self, clave: str) -> list[dict]:
         filas = [dict(f) for f in self.db.execute("SELECT * FROM indicadores WHERE clave = ?", (clave,))]

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block titulo %}Mi perfil{% endblock %}
+{% block contenido %}
+<section class="seccion">
+  <div class="contenedor articulo">
+    <p class="etiqueta">Mi cuenta</p>
+    <h1>Editar mi perfil</h1>
+    <p class="lead">Actualiza los datos que usas en DepaSeguro AQP.</p>
+
+    <form class="perfil-rejilla" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <aside class="caja perfil-foto">
+        {% if usuario.foto_perfil %}
+          <img class="perfil-avatar" src="{{ url_for('auth.foto_perfil') }}" alt="Foto de perfil actual">
+        {% else %}
+          <span class="perfil-avatar" aria-label="Sin foto de perfil">{{ usuario.iniciales }}</span>
+        {% endif %}
+        <label>Nueva foto
+          <input type="file" name="foto" accept="image/jpeg,image/png,image/webp">
+        </label>
+        <p class="nota">JPG, PNG o WEBP. Máximo 3 MB.</p>
+        {% if usuario.foto_perfil %}
+          <label class="casilla"><input type="checkbox" name="quitar_foto" value="1"> Quitar la foto actual</label>
+        {% endif %}
+      </aside>
+
+      <div class="caja">
+        <h2>Datos personales</h2>
+        <label>Nombre completo
+          <input name="nombre" value="{{ datos.get('nombre', '') }}" maxlength="120" autocomplete="name" required>
+        </label>
+        <label>Correo electrónico
+          <input type="email" name="email" value="{{ datos.get('email', '') }}" maxlength="254" autocomplete="email" required>
+        </label>
+        <label>Celular
+          <input type="tel" name="telefono" value="{{ datos.get('telefono', '') }}" inputmode="numeric" autocomplete="tel" placeholder="987654321">
+        </label>
+        <p class="nota">Tu rol de {{ usuario.rol }} y el estado de verificación no cambian desde aquí.</p>
+        <div class="acciones">
+          <button class="boton" type="submit">Guardar cambios</button>
+          <a class="boton boton-sec" href="{{ url_for(usuario.panel_inicio()) }}">Volver al panel</a>
+        </div>
+      </div>
+    </form>
+  </div>
+</section>
+{% endblock %}

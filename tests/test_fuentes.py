@@ -98,6 +98,42 @@ def test_denuncias_descubre_archivo_y_filtra_arequipa(db):
     assert len(fila) == 1 and fila[0]["ubigeo"] == "040103" and fila[0]["cantidad"] == 10
 
 
+def test_denuncias_actualiza_csv_en_la_misma_url_y_preserva_el_ultimo_valido(db):
+    catalogo = {"result": {"resources": [
+        {"name": "Denuncias de Enero 2018 a Septiembre 2026", "format": "CSV", "url": "https://x/historico.csv"}
+    ]}}
+    cabecera = "ANIO,MES,DIST_HECHO,UBIGEO_HECHO,P_MODALIDADES,cantidad\n"
+    sesion = SesionFalsa({"package_show": Respuesta(json.dumps(catalogo)),
+                          "historico.csv": Respuesta(cabecera + "2026,9,CAYMA,040103,Estafa,7\n")})
+    fuente = FuenteDenuncias(db, sesion)
+    assert fuente.ejecutar()["estado"] == "ok"
+    assert fuente.ejecutar()["estado"] == "sin_cambios"
+    sesion.rutas["historico.csv"] = Respuesta(cabecera + "2026,9,CAYMA,040103,Estafa,9\n")
+    assert fuente.ejecutar()["estado"] == "ok"
+    sesion.rutas["historico.csv"] = Respuesta(cabecera)
+    assert fuente.ejecutar()["estado"] == "error"
+    assert db.execute("SELECT cantidad FROM denuncias_distrito").fetchone()[0] == 9
+
+
+def test_denuncias_importa_archivos_anuales_del_portal(db):
+    catalogo = {"result": {"resources": [
+        {"name": f"DataSet - Denuncias Policiales - {anio}", "format": "csv", "url": f"https://x/{anio}.csv"}
+        for anio in (2025, 2026)
+    ]}}
+    cabecera = "ANIO_REGISTRO,MES_REGISTRO,DIST_HECHO,UBIGEO_HECHO,P_MODALIDADES,cantidad\n"
+    sesion = SesionFalsa({"package_show": Respuesta(json.dumps(catalogo)),
+                          "2025.csv": Respuesta(cabecera + "2025,2,CAYMA,040103,Estafa,7\n"),
+                          "2026.csv": Respuesta(cabecera + "2026,3,CAYMA,040103,Estafa,9\n")})
+    fuente = FuenteDenuncias(db, sesion)
+    assert fuente.ejecutar()["registros"] == 2
+    filas = db.execute("SELECT anio, mes, cantidad FROM denuncias_distrito ORDER BY anio")
+    assert [tuple(fila) for fila in filas] == [(2025, 2, 7), (2026, 3, 9)]
+    sesion.rutas["2026.csv"] = Respuesta(cabecera + "2026,4,CAYMA,040103,Estafa,12\n")
+    assert fuente.ejecutar()["estado"] == "ok"
+    filas = db.execute("SELECT anio, mes, cantidad FROM denuncias_distrito ORDER BY anio")
+    assert [tuple(fila) for fila in filas] == [(2025, 2, 7), (2026, 4, 12)]
+
+
 def test_denuncias_falla_si_cambia_el_catalogo(db):
     catalogo = {"result": [{"resources": [{"name": "Otro", "format": "csv", "url": "https://x/o.csv"}]}]}
     resultado = FuenteDenuncias(db, SesionFalsa({"package_show": Respuesta(json.dumps(catalogo))})).ejecutar()

@@ -8,10 +8,16 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 from ..dao.base import obtener_db
 from ..dao.repositorios import AlertaDAO, BusquedaGuardadaDAO, CampusDAO, FavoritoDAO, InmuebleDAO, ReporteDAO
 from ..services import reportes
-from ..services.gestion import registrar_reporte, registrar_resena
+from ..services.gestion import guardar_busqueda as registrar_busqueda, registrar_reporte, registrar_resena
 from .utilidades import requiere_rol
 
 bp = Blueprint("estudiante", __name__, url_prefix="/estudiante")
+
+
+def _aviso_publico(db, inmueble_id: int) -> None:
+    aviso = InmuebleDAO(db).obtener(inmueble_id)
+    if aviso is None or aviso["estado"] not in ("publicado", "observado"):
+        abort(404)
 
 
 @bp.route("/")
@@ -30,7 +36,9 @@ def panel():
 @bp.route("/favorito/<int:inmueble_id>", methods=["POST"])
 @requiere_rol("estudiante")
 def favorito(inmueble_id: int):
-    agregado = FavoritoDAO(obtener_db()).alternar(g.usuario.id, inmueble_id)
+    db = obtener_db()
+    _aviso_publico(db, inmueble_id)
+    agregado = FavoritoDAO(db).alternar(g.usuario.id, inmueble_id)
     flash("Aviso guardado. Te alertaremos si su puntaje baja." if agregado else "Aviso quitado de tus guardados.", "ok")
     return redirect(url_for("publico.detalle", inmueble_id=inmueble_id))
 
@@ -38,7 +46,9 @@ def favorito(inmueble_id: int):
 @bp.route("/resena/<int:inmueble_id>", methods=["POST"])
 @requiere_rol("estudiante")
 def resena(inmueble_id: int):
-    verificada = registrar_resena(obtener_db(), inmueble_id, g.usuario.id, request.form.get("puntaje"),
+    db = obtener_db()
+    _aviso_publico(db, inmueble_id)
+    verificada = registrar_resena(db, inmueble_id, g.usuario.id, request.form.get("puntaje"),
                                   request.form.get("comentario", ""), request.form.get("codigo", ""))
     flash("Reseña verificada publicada." if verificada else "Reseña publicada sin código de visita.", "ok")
     return redirect(url_for("publico.detalle", inmueble_id=inmueble_id) + "#resenas")
@@ -47,7 +57,9 @@ def resena(inmueble_id: int):
 @bp.route("/reportar/<int:inmueble_id>", methods=["POST"])
 @requiere_rol("estudiante")
 def reportar(inmueble_id: int):
-    identificador = registrar_reporte(obtener_db(), inmueble_id, g.usuario.id, request.form.to_dict())
+    db = obtener_db()
+    _aviso_publico(db, inmueble_id)
+    identificador = registrar_reporte(db, inmueble_id, g.usuario.id, request.form.to_dict())
     flash(f"Registramos tu reporte N.º {identificador}. Puedes descargar tu expediente en tu panel.", "ok")
     return redirect(url_for("publico.detalle", inmueble_id=inmueble_id))
 
@@ -55,10 +67,7 @@ def reportar(inmueble_id: int):
 @bp.route("/busquedas", methods=["POST"])
 @requiere_rol("estudiante")
 def guardar_busqueda():
-    BusquedaGuardadaDAO(obtener_db()).insertar({
-        "usuario_id": g.usuario.id, "campus_id": request.form.get("campus_id", type=int),
-        "radio_km": request.form.get("radio_km", 2, type=float), "precio_max": request.form.get("precio_max", 800, type=float),
-        "trust_min": request.form.get("trust_min", 60, type=int)})
+    registrar_busqueda(obtener_db(), g.usuario.id, request.form)
     flash("Búsqueda guardada. Te avisaremos cuando aparezca una opción compatible.", "ok")
     return redirect(url_for("estudiante.panel"))
 

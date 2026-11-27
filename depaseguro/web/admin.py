@@ -17,7 +17,7 @@ from ..services.analitica import normalizar_telefono, telefono_valido
 from ..services.evaluador import reevaluar_todos
 from ..services.gestion import (ErrorNegocio, cambiar_estado_aviso, cambiar_usuario, resolver_reporte,
                                 revisar_documento)
-from .utilidades import requiere_rol
+from .utilidades import requiere_rol, volver_a
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -41,7 +41,7 @@ def avisos():
 def estado_aviso(inmueble_id: int):
     cambiar_estado_aviso(obtener_db(), inmueble_id, g.usuario.id, request.form.get("estado", ""))
     flash("Estado actualizado.", "ok")
-    return redirect(request.referrer or url_for("admin.avisos"))
+    return volver_a("admin.avisos")
 
 
 @bp.route("/documentos")
@@ -142,8 +142,12 @@ def alertas():
 def fuentes():
     db = obtener_db()
     if request.method == "POST":
-        resultados = ejecutar_ingesta(db, request.form.get("clave") or None)
+        resultados = ejecutar_ingesta(db, request.form.get("clave") or None,
+                                      geocodificar=current_app.config["GEOCODIFICAR"])
         AuditoriaDAO(db).registrar(g.usuario.id, "ejecutar_ingesta", "fuentes_datos")
+        if resultados[0]["estado"] in ("ocupado", "omitido"):
+            flash(resultados[0]["mensaje"], "info")
+            return redirect(url_for("admin.fuentes"))
         fallidas = [r["fuente"] for r in resultados if r["estado"] == "error"]
         flash(f"Lectura terminada con errores en: {', '.join(fallidas)}." if fallidas
               else "Lectura de fuentes terminada.", "error" if fallidas else "ok")

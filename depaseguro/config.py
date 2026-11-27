@@ -36,7 +36,7 @@ class Config:
     HTTP_TIMEOUT = 90
     # Cliente genérico: las APIs abiertas piden identificar la aplicación, no a una persona.
     USER_AGENT = "DepaSeguroAQP/1.0 (proyecto academico UTP Arequipa)"
-    GEOCODIFICAR = os.environ.get("DEPASEGURO_GEOCODIFICAR", "1") == "1"
+    GEOCODIFICAR = os.environ.get("DEPASEGURO_GEOCODIFICAR", "0") == "1"
 
     # Umbrales del motor de riesgo
     MUESTRA_MINIMA_PRECIOS = 5
@@ -54,12 +54,13 @@ class Config:
             "DB_PATH": data / "depaseguro.db",
             "UPLOAD_IMAGENES": data / "uploads" / "imagenes",
             "UPLOAD_DOCUMENTOS": data / "uploads" / "documentos",
+            "UPLOAD_PERFILES": data / "uploads" / "perfiles",
             "CACHE_DIR": data / "cache",
             "EXPORT_DIR": data / "exports",
         }
         for clave, ruta in rutas.items():
             app.config.setdefault(clave, ruta)
-        for clave in ("UPLOAD_IMAGENES", "UPLOAD_DOCUMENTOS", "CACHE_DIR", "EXPORT_DIR"):
+        for clave in ("UPLOAD_IMAGENES", "UPLOAD_DOCUMENTOS", "UPLOAD_PERFILES", "CACHE_DIR", "EXPORT_DIR"):
             Path(app.config[clave]).mkdir(parents=True, exist_ok=True)
         if not app.config.get("SECRET_KEY"):
             app.config["SECRET_KEY"] = _clave_secreta(data)

@@ -7,3 +7,4 @@ htmlcov/
 data/
 .env
 entregables/*.zip
+~$*

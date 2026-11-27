@@ -18,7 +18,7 @@ def mapa():
         {"id": a["id"], "titulo": a["titulo"], "lat": a["lat"], "lon": a["lon"], "nivel": a["nivel_riesgo"],
          "trust": a["trust_score"], "precio": a["precio_mensual_pen"], "distrito": a["distrito"].title(),
          "url": url_for("publico.detalle", inmueble_id=a["id"])}
-        for a in InmuebleDAO(db).publicados() if a["lat"] is not None
+        for a in InmuebleDAO(db).publicados() if a["lat"] is not None and a["lon"] is not None
     ]
     campus = [{"universidad": c["universidad"].title(), "lat": c["lat"], "lon": c["lon"], "local": c["codigo_local"],
                "licencia": c["licencia"]} for c in CampusDAO(db).todos()]

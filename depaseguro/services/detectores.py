@@ -37,9 +37,10 @@ class DetectorImagenes(Detector):
             return [Hallazgo("sin_fotos", Severidad.MEDIA, "Aviso sin fotografías",
                              "No se puede comprobar visualmente el inmueble.")]
         if ctx.duplicados_imagen:
-            titulos = ", ".join(sorted({d["titulo"] for d in ctx.duplicados_imagen})[:3])
-            return [Hallazgo("imagen_clonada", Severidad.ALTA, "Fotografía repetida en otro aviso",
-                             f"Coincide con fotos de otro arrendador: {titulos}.")]
+            titulos = ", ".join(sorted({d["titulo"] for d in ctx.duplicados_imagen if d["titulo"]})[:3])
+            detalle = f"Coincide con fotos de otro arrendador: {titulos}." if titulos else (
+                "Coincide con fotos de otro arrendador.")
+            return [Hallazgo("imagen_clonada", Severidad.ALTA, "Fotografía repetida en otro aviso", detalle)]
         return []
 
 

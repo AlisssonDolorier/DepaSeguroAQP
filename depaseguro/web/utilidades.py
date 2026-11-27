@@ -6,6 +6,7 @@ import secrets
 import time
 from collections import defaultdict
 from functools import wraps
+from urllib.parse import urlsplit
 
 from flask import abort, flash, g, redirect, request, session, url_for
 
@@ -30,8 +31,30 @@ def preparar_peticion() -> None:
             session.clear()
     if request.method == "POST":
         enviado = request.form.get("csrf_token", "") or request.headers.get("X-CSRF-Token", "")
-        if not hmac.compare_digest(enviado, session.get("csrf_token", "-")):
+        esperado = session.get("csrf_token")
+        if not esperado or not hmac.compare_digest(enviado.encode("utf-8"), esperado.encode("utf-8")):
             abort(403)
+
+
+def destino_seguro(destino: str | None) -> str | None:
+    if not destino or not destino.startswith("/") or destino.startswith("//"):
+        return None
+    if "\\" in destino or any(ord(caracter) < 32 for caracter in destino):
+        return None
+    return destino
+
+
+def volver_a(endpoint: str):
+    if request.referrer:
+        try:
+            origen, referencia = urlsplit(request.host_url), urlsplit(request.referrer)
+        except ValueError:
+            return redirect(url_for(endpoint))
+        if (referencia.scheme, referencia.netloc) == (origen.scheme, origen.netloc):
+            destino = destino_seguro(referencia.path)
+            if destino:
+                return redirect(destino + ("?" + referencia.query if referencia.query else ""))
+    return redirect(url_for(endpoint))
 
 
 def token_csrf() -> str:

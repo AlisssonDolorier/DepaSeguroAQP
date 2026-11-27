@@ -19,12 +19,14 @@ FACTOR_PERIODO = {"semana": 52 / 12, "mes": 1, "semestre": 1 / 6, "anio": 1 / 12
 def normalizar_precio(precio: float, moneda: str, periodo: str, area_m2: float,
                       tipo_cambio: float) -> PrecioNormalizado:
     """Convierte cualquier precio publicado a soles por mes y soles por m²."""
-    if precio <= 0 or area_m2 <= 0:
+    if not all(math.isfinite(n) and n > 0 for n in (precio, area_m2)):
         raise ValueError("El precio y el área deben ser mayores que cero.")
     if periodo not in FACTOR_PERIODO:
         raise ValueError(f"Periodo no reconocido: {periodo}")
     en_soles = precio * tipo_cambio if moneda == "USD" else precio
     mensual = en_soles * FACTOR_PERIODO[periodo]
+    if not math.isfinite(mensual) or mensual <= 0:
+        raise ValueError("El precio mensual normalizado debe ser un número positivo y finito.")
     return PrecioNormalizado(round(mensual, 2), round(mensual / area_m2, 2),
                              tipo_cambio if moneda == "USD" else None)
 
@@ -97,15 +99,21 @@ def hamming(hash_a: str, hash_b: str) -> int:
     return bin(int(hash_a, 16) ^ int(hash_b, 16)).count("1")
 
 
+class ImagenInvalida(ValueError):
+    """Archivo vacío, dañado o de un formato de imagen no admitido."""
+
+
 def analizar_imagen(contenido: bytes) -> dict:
     """Valida que los bytes sean una imagen real y calcula sus huellas."""
-    with Image.open(io.BytesIO(contenido)) as prueba:
-        prueba.verify()
-    with Image.open(io.BytesIO(contenido)) as imagen:
-        if imagen.format not in {"JPEG", "PNG", "WEBP"}:
-            raise ValueError("Formato de imagen no permitido.")
-        return {"sha256": sha256_bytes(contenido), "dhash": dhash(imagen),
-                "ancho": imagen.width, "alto": imagen.height, "formato": imagen.format}
+    formatos = ["JPEG", "PNG", "WEBP"]
+    try:
+        with Image.open(io.BytesIO(contenido), formats=formatos) as prueba:
+            prueba.verify()
+        with Image.open(io.BytesIO(contenido), formats=formatos) as imagen:
+            return {"sha256": sha256_bytes(contenido), "dhash": dhash(imagen),
+                    "ancho": imagen.width, "alto": imagen.height, "formato": imagen.format}
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as error:
+        raise ImagenInvalida("Usa una imagen JPG, PNG o WEBP válida.") from error
 
 
 def normalizar_telefono(telefono: str) -> str:
@@ -143,6 +151,7 @@ def distancia_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     delta_fi = math.radians(lat2 - lat1)
     delta_lambda = math.radians(lon2 - lon1)
     a = math.sin(delta_fi / 2) ** 2 + math.cos(fi1) * math.cos(fi2) * math.sin(delta_lambda / 2) ** 2
+    a = min(1.0, max(0.0, a))
     return round(radio * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)), 2)
 
 
@@ -153,7 +162,8 @@ def sin_acentos(texto: str) -> str:
 
 FRASES_RIESGO = {
     "presion": ("solo hoy", "ultimo cuarto", "ultima habitacion", "urgente", "muchos interesados",
-                "se va rapido", "reserva ya", "reserva ahora", "aprovecha ya", "hoy mismo", "no pierdas"),
+                "se va rapido", "reserva ya", "reserva ahora", "aprovecha ya", "hoy mismo", "no pierdas",
+                "no te quedes sin"),
     "pago": ("yape", "plin", "deposita", "deposito", "transferencia", "adelanta", "adelanto antes",
              "separa con", "separar con", "reserva con", "pago por adelantado", "paga antes"),
     "evasion": ("sin visita", "no hay visitas", "estoy de viaje", "fuera de la ciudad", "fuera del pais",
@@ -164,7 +174,7 @@ FRASES_RIESGO = {
 
 def analizar_texto(texto: str) -> dict[str, list[str]]:
     """Busca expresiones típicas de estafa, sin distinguir mayúsculas ni tildes."""
-    limpio = sin_acentos(texto).lower()
+    limpio = " ".join(sin_acentos(texto).lower().split())
     return {
         categoria: [frase for frase in frases if frase in limpio]
         for categoria, frases in FRASES_RIESGO.items()

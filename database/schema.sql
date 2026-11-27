@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
     password_hash TEXT NOT NULL,
     rol           TEXT NOT NULL CHECK (rol IN ('estudiante','arrendador','admin')),
     telefono      TEXT,
+    foto_perfil   TEXT,
     tipo_doc      TEXT CHECK (tipo_doc IN ('DNI','RUC','CE') OR tipo_doc IS NULL),
     num_doc       TEXT,
     verificado    INTEGER NOT NULL DEFAULT 0,

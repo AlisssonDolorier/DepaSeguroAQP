@@ -81,6 +81,9 @@ def main() -> None:
 
 
 def git() -> None:
+    resultado = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=RAIZ, capture_output=True)
+    if resultado.returncode or resultado.stdout.strip() != b"true":
+        raise SystemExit("Se necesita un repositorio Git para generar las evidencias de historial.")
     EVIDENCIAS.mkdir(parents=True, exist_ok=True)
     terminal("git_ramas", "$ git branch -a\n" + ejecutar("git", "branch", "-a"))
     terminal("git_grafo", "$ git log --oneline --graph --all\n" + ejecutar("git", "log", "--oneline", "--graph", "--all", "-n", "24"))

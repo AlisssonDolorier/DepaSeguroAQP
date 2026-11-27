@@ -1,19 +1,17 @@
 """Registro, inicio y cierre de sesión."""
 from __future__ import annotations
 
-from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for
+from pathlib import Path
+
+from flask import (Blueprint, abort, current_app, flash, g, redirect, render_template, request, send_from_directory,
+                   session, url_for)
 
 from ..dao.base import obtener_db
 from ..models.entidades import fabrica_usuario
-from ..services.gestion import ErrorNegocio, autenticar, registrar_usuario
-from .utilidades import demasiados_intentos, limpiar_intentos, registrar_intento
+from ..services.gestion import ErrorNegocio, actualizar_perfil, autenticar, registrar_usuario
+from .utilidades import demasiados_intentos, destino_seguro, limpiar_intentos, registrar_intento, requiere_rol
 
 bp = Blueprint("auth", __name__)
-
-
-def _destino_seguro(destino: str | None) -> str | None:
-    """Solo acepta rutas internas para evitar redirecciones a sitios externos."""
-    return destino if destino and destino.startswith("/") and not destino.startswith("//") else None
 
 
 def _iniciar(fila: dict):
@@ -54,8 +52,31 @@ def login():
             return render_template("auth/login.html"), 401
         limpiar_intentos(clave_ip)
         usuario = _iniciar(fila)
-        return redirect(_destino_seguro(request.args.get("siguiente")) or url_for(usuario.panel_inicio()))
+        return redirect(destino_seguro(request.args.get("siguiente")) or url_for(usuario.panel_inicio()))
     return render_template("auth/login.html")
+
+
+@bp.route("/perfil", methods=["GET", "POST"])
+@requiere_rol("estudiante", "arrendador", "admin")
+def perfil():
+    if request.method == "POST":
+        try:
+            actualizar_perfil(obtener_db(), g.usuario.id, request.form.to_dict(), request.files.get("foto"))
+        except ErrorNegocio as error:
+            flash(str(error), "error")
+            return render_template("auth/perfil.html", datos=request.form), 400
+        flash("Tu perfil fue actualizado.", "ok")
+        return redirect(url_for("auth.perfil"))
+    return render_template("auth/perfil.html", datos={
+        "nombre": g.usuario.nombre, "email": g.usuario.email, "telefono": g.usuario.telefono or ""})
+
+
+@bp.route("/perfil/foto")
+@requiere_rol("estudiante", "arrendador", "admin")
+def foto_perfil():
+    if not g.usuario.foto_perfil:
+        abort(404)
+    return send_from_directory(Path(current_app.config["UPLOAD_PERFILES"]), g.usuario.foto_perfil)
 
 
 @bp.route("/logout", methods=["POST"])

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import re
+import threading
 import time
 from abc import ABC, abstractmethod
 from datetime import date, datetime, timedelta
@@ -39,6 +41,10 @@ def decodificar(contenido: bytes) -> str:
         return contenido.decode("cp1252", errors="replace")
 
 
+def _huella_archivos(archivos: list[bytes]) -> str:
+    return hashlib.sha256(b"".join(hashlib.sha256(archivo).digest() for archivo in archivos)).hexdigest()
+
+
 class FuenteDatos(ABC):
     clave = ""
     nombre = ""
@@ -46,6 +52,7 @@ class FuenteDatos(ABC):
     categoria = "estado"
     url = ""
     uso = ""
+    permite_vacio = False
 
     def __init__(self, conexion, sesion: requests.Session | None = None) -> None:
         self.db = conexion
@@ -61,7 +68,8 @@ class FuenteDatos(ABC):
         """Consulta el catálogo del portal; así se encuentra el archivo más reciente aunque cambie de nombre."""
         respuesta = self.descargar(f"{PORTAL}/api/3/action/package_show", params={"id": dataset})
         resultado = respuesta.json()["result"]
-        return resultado[0]["resources"]
+        catalogo = resultado[0] if isinstance(resultado, list) else resultado
+        return catalogo["resources"]
 
     @abstractmethod
     def obtener(self) -> object:
@@ -87,6 +95,8 @@ class FuenteDatos(ABC):
                 registros, estado, mensaje = previa["registros"], "sin_cambios", "La fuente no publicó datos nuevos."
             else:
                 registros = self.cargar(crudo)
+                if registros == 0 and not self.permite_vacio:
+                    raise ValueError("La fuente no devolvió registros válidos.")
                 self.db.commit()
                 estado, mensaje = "ok", f"{registros} registro(s) actualizados."
             fuentes.actualizar(self.clave, {"ultima_ejecucion": ahora(), "ultimo_exito": ahora(), "estado": estado,
@@ -132,14 +142,18 @@ class FuenteBCRP(FuenteDatos):
         total = 0
         for fila in crudo["tc"]:
             valor = fila["values"][0]
-            if valor not in ("n.d.", ""):
-                indicadores.guardar("tipo_cambio_venta", self._periodo_diario(fila["name"]), float(valor), self.clave)
-                total += 1
+            if valor not in (None, "n.d.", ""):
+                tasa = float(valor)
+                if math.isfinite(tasa) and tasa > 0:
+                    indicadores.guardar("tipo_cambio_venta", self._periodo_diario(fila["name"]), tasa, self.clave)
+                    total += 1
         for fila in crudo["ipc"]:
             valor = fila["values"][0]
-            if valor not in ("n.d.", ""):
-                indicadores.guardar("ipc_lima", self._periodo_mensual(fila["name"]), float(valor), self.clave)
-                total += 1
+            if valor not in (None, "n.d.", ""):
+                indice = float(valor)
+                if math.isfinite(indice) and indice > 0:
+                    indicadores.guardar("ipc_lima", self._periodo_mensual(fila["name"]), indice, self.clave)
+                    total += 1
         return total
 
 
@@ -153,33 +167,50 @@ class FuenteDenuncias(FuenteDatos):
     uso = "Calcula estafas y delitos patrimoniales por distrito y genera alertas de zona."
     dataset = "denuncias-policiales-registradas-nivel-nacional-mininter"
 
-    def obtener(self) -> dict:
-        recursos = [r for r in self.recursos_portal(self.dataset) if str(r.get("format", "")).lower() == "csv"]
-        historicos = [r for r in recursos if re.search(r"Enero\s+2018\s+a", r.get("name", ""))]
-        if not historicos:
-            raise ValueError("No se encontró el archivo histórico en el catálogo.")
-        recurso = historicos[-1]
-        return {"url": recurso["url"], "nombre": recurso["name"]}
+    def obtener(self) -> list[bytes]:
+        historicos, anuales = [], {}
+        for recurso in self.recursos_portal(self.dataset):
+            if str(recurso.get("format", "")).lower() != "csv":
+                continue
+            nombre = recurso.get("name") or ""
+            anual = re.search(r"Denuncias Policiales\s*-\s*(\d{4})\s*$", nombre, re.IGNORECASE)
+            if anual:
+                anuales[int(anual[1])] = recurso["url"]
+            elif re.search(r"Enero\s+2018\s+a", nombre, re.IGNORECASE):
+                historicos.append(recurso["url"])
+        urls = historicos[-1:] + [anuales[anio] for anio in sorted(anuales)]
+        if not urls:
+            raise ValueError("El catálogo no incluye un histórico ni archivos anuales de denuncias.")
+        return [self.descargar(url).content for url in dict.fromkeys(urls)]
 
-    def huella(self, crudo: dict) -> str:
-        return hashlib.sha256(crudo["url"].encode()).hexdigest()
+    def huella(self, crudo: list[bytes]) -> str:
+        return _huella_archivos(crudo)
 
-    def cargar(self, crudo: dict) -> int:
-        contenido = self.descargar(crudo["url"]).content
-        tabla = pd.read_csv(io.StringIO(decodificar(contenido)), dtype=str)
-        return self.guardar(tabla)
+    def cargar(self, crudo: list[bytes]) -> int:
+        total = 0
+        for archivo in crudo:
+            tabla = pd.read_csv(io.StringIO(decodificar(archivo)), dtype=str)
+            total += self.guardar(tabla)
+        return total
 
     def guardar(self, tabla: pd.DataFrame) -> int:
-        tabla["UBIGEO_HECHO"] = tabla["UBIGEO_HECHO"].str.zfill(6)
-        arequipa = tabla[tabla["UBIGEO_HECHO"].str.startswith(PROVINCIA_DISTRITOS_UBIGEO)].copy()
-        arequipa["cantidad"] = pd.to_numeric(arequipa["cantidad"], errors="coerce").fillna(0).astype(int)
-        agrupado = arequipa.groupby(
-            ["UBIGEO_HECHO", "DIST_HECHO", "ANIO", "MES", "P_MODALIDADES"], as_index=False)["cantidad"].sum()
-        self.db.execute("DELETE FROM denuncias_distrito")
+        tabla = tabla.rename(columns={"ANIO_REGISTRO": "ANIO", "MES_REGISTRO": "MES"})
+        tabla["UBIGEO_HECHO"] = tabla["UBIGEO_HECHO"].str.strip().str.zfill(6)
+        arequipa = tabla[tabla["UBIGEO_HECHO"].str.fullmatch(PROVINCIA_DISTRITOS_UBIGEO + r"\d{2}", na=False)].copy()
+        for campo in ("ANIO", "MES", "cantidad"):
+            arequipa[campo] = pd.to_numeric(arequipa[campo], errors="coerce")
+        arequipa = arequipa[arequipa["ANIO"].between(1900, 2100) & arequipa["MES"].between(1, 12)
+                            & (arequipa["cantidad"] >= 0)]
+        agrupado = arequipa.groupby(["UBIGEO_HECHO", "ANIO", "MES", "P_MODALIDADES"], as_index=False).agg(
+            distrito=("DIST_HECHO", "first"), cantidad=("cantidad", "sum")).dropna(subset=["distrito"])
+        if agrupado.empty:
+            raise ValueError("El CSV no contiene denuncias válidas para la provincia de Arequipa.")
+        self.db.executemany("DELETE FROM denuncias_distrito WHERE anio = ?",
+                            [(int(anio),) for anio in agrupado["ANIO"].unique()])
         self.db.executemany(
-            """INSERT OR REPLACE INTO denuncias_distrito(ubigeo, distrito, anio, mes, modalidad, cantidad)
+            """INSERT INTO denuncias_distrito(ubigeo, distrito, anio, mes, modalidad, cantidad)
                VALUES (?,?,?,?,?,?)""",
-            [(f.UBIGEO_HECHO, f.DIST_HECHO, int(f.ANIO), int(f.MES), f.P_MODALIDADES, int(f.cantidad))
+            [(f.UBIGEO_HECHO, f.distrito, int(f.ANIO), int(f.MES), f.P_MODALIDADES, int(f.cantidad))
              for f in agrupado.itertuples()],
         )
         return len(agrupado)
@@ -195,19 +226,19 @@ class FuenteCiberdelitos(FuenteDatos):
     uso = "Muestra la evolución del fraude informático y la suplantación en Arequipa."
     dataset = "delitos-informáticos-denunciados-ante-el-ministerio-público-mpfn"
 
-    def obtener(self) -> list[dict]:
+    def obtener(self) -> list[bytes]:
         recursos = self.recursos_portal(self.dataset)
-        archivos = [r for r in recursos if str(r.get("format", "")).lower() == "csv"]
-        return [{"url": r["url"], "nombre": r["name"]} for r in archivos]
+        urls = sorted({r["url"] for r in recursos if str(r.get("format", "")).lower() == "csv"})
+        if not urls:
+            raise ValueError("El catálogo no incluye archivos CSV.")
+        return [self.descargar(url).content for url in urls]
 
-    def cargar(self, crudo: list[dict]) -> int:
-        total = 0
+    def huella(self, crudo: list[bytes]) -> str:
+        return _huella_archivos(crudo)
+
+    def cargar(self, crudo: list[bytes]) -> int:
         self.db.execute("DELETE FROM ciberdelitos")
-        for recurso in crudo:
-            contenido = self.descargar(recurso["url"]).content
-            tabla = pd.read_csv(io.StringIO(decodificar(contenido)), dtype=str)
-            total += self.guardar(tabla)
-        return total
+        return sum(self.guardar(pd.read_csv(io.StringIO(decodificar(archivo)), dtype=str)) for archivo in crudo)
 
     def guardar(self, tabla: pd.DataFrame) -> int:
         tabla.columns = [c.strip().lower() for c in tabla.columns]
@@ -234,18 +265,17 @@ class FuenteSunedu(FuenteDatos):
     uso = "Da la ubicación y licencia de cada campus para buscar por cercanía."
     dataset = "sunedu-programas-académicos"
 
-    def obtener(self) -> dict:
+    def obtener(self) -> bytes:
         recursos = [r for r in self.recursos_portal(self.dataset) if str(r.get("format", "")).lower() == "csv"]
         if not recursos:
             raise ValueError("El catálogo no incluye un CSV.")
-        return {"url": recursos[0]["url"]}
+        return self.descargar(recursos[0]["url"]).content
 
-    def huella(self, crudo: dict) -> str:
-        return hashlib.sha256(crudo["url"].encode()).hexdigest()
+    def huella(self, crudo: bytes) -> str:
+        return hashlib.sha256(crudo).hexdigest()
 
-    def cargar(self, crudo: dict) -> int:
-        contenido = self.descargar(crudo["url"]).content
-        tabla = pd.read_csv(io.StringIO(decodificar(contenido)), sep="|", dtype=str)
+    def cargar(self, crudo: bytes) -> int:
+        tabla = pd.read_csv(io.StringIO(decodificar(crudo)), sep="|", dtype=str)
         return self.guardar(tabla)
 
     def guardar(self, tabla: pd.DataFrame) -> int:
@@ -255,7 +285,7 @@ class FuenteSunedu(FuenteDatos):
         for fila in locales.itertuples():
             lat, lon = pd.to_numeric(fila.LATITUD_UBICACION, errors="coerce"), pd.to_numeric(
                 fila.LONGITUD_UBICACION, errors="coerce")
-            if pd.isna(lat) or pd.isna(lon):
+            if pd.isna(lat) or pd.isna(lon) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 continue
             self.db.execute(
                 """INSERT INTO campus(universidad, codigo_local, distrito, lat, lon, licencia, fecha_corte, actualizado_en)
@@ -340,13 +370,24 @@ class FuenteOpenStreetMap(FuenteDatos):
     url = "https://nominatim.openstreetmap.org/"
     uso = "Comprueba que la dirección exista y corresponda al distrito declarado."
     LOTE = 15
+    permite_vacio = True
+    _candado = threading.Lock()
+
+    def __init__(self, conexion, sesion: requests.Session | None = None, inmueble_id: int | None = None) -> None:
+        super().__init__(conexion, sesion)
+        self.inmueble_id = inmueble_id
+
+    def ejecutar(self) -> dict:
+        with self._candado:
+            return super().ejecutar()
 
     def obtener(self) -> list[dict]:
         filas = self.db.execute(
-            """SELECT i.id, i.direccion, i.lat, i.lon, d.nombre AS distrito, d.lat AS dlat, d.lon AS dlon
+            """SELECT i.id, i.ubigeo, i.direccion, i.lat, i.lon, d.nombre AS distrito, d.lat AS dlat, d.lon AS dlon
                FROM inmuebles i JOIN distritos d ON d.ubigeo = i.ubigeo
-               WHERE i.direccion_estado = 'sin_verificar' AND i.estado != 'retirado' LIMIT ?""",
-            (self.LOTE,),
+               WHERE i.direccion_estado = 'sin_verificar' AND i.estado != 'retirado'
+                 AND (? IS NULL OR i.id = ?) ORDER BY i.id LIMIT ?""",
+            (self.inmueble_id, self.inmueble_id, self.LOTE),
         ).fetchall()
         return [dict(f) for f in filas]
 
@@ -357,30 +398,41 @@ class FuenteOpenStreetMap(FuenteDatos):
         guardado = self.db.execute("SELECT * FROM geocache WHERE consulta = ?", (consulta,)).fetchone()
         if guardado:
             return dict(guardado) if guardado["lat"] is not None else None
-        time.sleep(1.1)  # política de uso: máximo una consulta por segundo
+        time.sleep(15.1)  # Las tareas periódicas de Nominatim permiten hasta cuatro consultas por minuto.
         respuesta = self.descargar(f"{self.url}search", params={
             "q": consulta, "format": "jsonv2", "limit": 1, "countrycodes": "pe"})
         datos = respuesta.json()
         punto = ({"lat": float(datos[0]["lat"]), "lon": float(datos[0]["lon"]), "nombre": datos[0]["display_name"]}
                  if datos else None)
-        self.db.execute("INSERT OR REPLACE INTO geocache(consulta, lat, lon, nombre) VALUES (?,?,?,?)",
-                        (consulta, *(punto.values() if punto else (None, None, None))))
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO geocache(consulta, lat, lon, nombre) VALUES (?,?,?,?)",
+                            (consulta, *(punto.values() if punto else (None, None, None))))
         return punto
 
     def cargar(self, crudo: list[dict]) -> int:
         from ..services.analitica import distancia_km
 
-        for aviso in crudo:
-            punto = self.geocodificar(f"{aviso['direccion']}, {aviso['distrito'].title()}, Arequipa, Perú")
-            if punto is None:
-                self.db.execute("UPDATE inmuebles SET direccion_estado = 'no_encontrada' WHERE id = ?", (aviso["id"],))
-                continue
-            lat, lon = aviso["lat"] or punto["lat"], aviso["lon"] or punto["lon"]
-            lejos = aviso["dlat"] is not None and distancia_km(lat, lon, aviso["dlat"], aviso["dlon"]) > 8
-            self.db.execute(
-                "UPDATE inmuebles SET lat = ?, lon = ?, direccion_estado = ? WHERE id = ?",
-                (lat, lon, "fuera_distrito" if lejos else "verificada", aviso["id"]))
-        return len(crudo)
+        puntos = [(aviso, self.geocodificar(f"{aviso['direccion']}, {aviso['distrito'].title()}, Arequipa, Perú"))
+                  for aviso in crudo]
+        actualizados = 0
+        for aviso, punto in puntos:
+            lat, lon = aviso["lat"], aviso["lon"]
+            estado = "no_encontrada"
+            if punto is not None:
+                if lat is None or lon is None:
+                    lat, lon = punto["lat"], punto["lon"]
+                centro = aviso["dlat"], aviso["dlon"]
+                lejos = None not in centro and any(
+                    distancia_km(*coordenadas, *centro) > 8
+                    for coordenadas in ((lat, lon), (punto["lat"], punto["lon"])))
+                estado = "fuera_distrito" if lejos else "verificada"
+            actualizados += self.db.execute(
+                """UPDATE inmuebles SET lat = ?, lon = ?, direccion_estado = ?
+                   WHERE id = ? AND ubigeo = ? AND direccion = ? AND lat IS ? AND lon IS ?
+                     AND direccion_estado = 'sin_verificar' AND estado != 'retirado'""",
+                (lat, lon, estado, aviso["id"], aviso["ubigeo"], aviso["direccion"], aviso["lat"], aviso["lon"])
+            ).rowcount
+        return actualizados
 
 
 FUENTES = (FuenteBCRP, FuenteSunedu, FuenteDenuncias, FuenteCiberdelitos,

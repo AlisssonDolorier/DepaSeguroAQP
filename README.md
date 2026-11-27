@@ -1,11 +1,6 @@
 # DepaSeguro AQP
 
-## Entrega del avance
-
-- [ZIP completo](Avance_Proyecto_Final_DepaSeguro_AQP.zip), con respaldo SQLite y datos ficticios.
-- [Inicio rápido](INICIO_RAPIDO.md) para ejecutar el proyecto extraído.
-- [Código fuente](depaseguro/), [diagramas](docs/diagramas/) y [guía de sustentación](docs/GUIA_SUSTENTACION.md).
-- [Informe, manual y presentación](entregables/).
+El código actualizado está en la rama `main`. Consulta el [inicio rápido](INICIO_RAPIDO.md) para instalar el proyecto y generar una base de demostración. El ZIP del avance que figura en el repositorio corresponde a la entrega anterior.
 
 Plataforma web para verificar avisos de vivienda universitaria en Arequipa, calcular un Trust Score y prevenir estafas de alquiler.
 
@@ -36,22 +31,21 @@ Proyecto final del curso **Lenguajes de Programación**, Universidad Tecnológic
 | Wikidata | ONG | Población por distrito |
 | Transparency International, vía Our World in Data | ONG | Índice de Percepción de la Corrupción |
 
-El planificador revisa cada hora y actualiza cada 24 horas. Si una fuente falla, el sistema conserva los últimos datos válidos.
+El planificador revisa cada hora y actualiza cada 24 horas. Si una fuente falla, el sistema conserva los últimos datos válidos. La consulta de direcciones a Nominatim está desactivada inicialmente. Configura `DEPASEGURO_GEOCODIFICAR=1` para habilitarla en una instalación que cumpla la [política de uso de Nominatim](https://operations.osmfoundation.org/policies/nominatim/). El mapa permite marcar puntos manualmente.
 
 ## Instalación rápida
 
 Requiere Python 3.12 o superior.
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python run.py --ingesta
-python scripts/poblar_demo.py
-python run.py
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:DEPASEGURO_INGESTA = '0'
+.\.venv\Scripts\python.exe -m scripts.poblar_demo
+.\.venv\Scripts\python.exe run.py
 ```
 
-Abre <http://127.0.0.1:5000>. El manual completo está en `entregables/`.
+Abre <http://127.0.0.1:5000>. El comando `scripts.poblar_demo` crea los avisos y las cuentas ficticias en una base vacía. Si usas el ZIP de entrega con su respaldo en `data/`, puedes omitir ese paso. El informe, el manual y la presentación están en el ZIP de entrega.
 
 Cuentas de demostración, con la clave definida en `scripts/poblar_demo.py`:
 
@@ -65,12 +59,12 @@ Todos los avisos y usuarios de demostración son ficticios y aparecen marcados.
 
 ## Documentos
 
-`scripts/` contiene los generadores de diagramas, evidencias, informe, manual y presentación. Necesitan `requirements-docs.txt` y Microsoft Office.
+`scripts/` contiene los generadores de diagramas, evidencias, informe, manual y presentación. Instala `requirements-docs.txt` para ejecutarlos. `generar_informe.py` y `generar_manual.py` requieren sus plantillas originales en formato `.docx`, que se pasan como argumento y no se incluyen en esta copia. La conversión de esos documentos a PDF usa Microsoft Word. Los entregables y las capturas incluidas corresponden a la versión de la entrega original.
 
 ## Pruebas
 
 ```bash
-python -m pytest --cov=depaseguro
+.\.venv\Scripts\python.exe -m pytest --cov=depaseguro
 ```
 
 ## Arquitectura

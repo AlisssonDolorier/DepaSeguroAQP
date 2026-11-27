@@ -10,6 +10,7 @@ from dataclasses import asdict
 from functools import lru_cache, reduce
 
 from ..config import Config
+from ..dao.base import transaccion
 from ..dao.repositorios import (DocumentoDAO, EvaluacionDAO, ImagenDAO, IndicadorDAO, InmuebleDAO,
                                 ListaContactosDAO, ReporteDAO, ResenaDAO)
 from ..functional.pipeline import limitar
@@ -67,7 +68,7 @@ def inferir(inmueble_id: int, hallazgos: list[Hallazgo], contexto: ContextoEvalu
 
 def puntuar_documentos(ctx: ContextoEvaluacion) -> ComponenteScore:
     aprobados = {d["tipo"] for d in ctx.documentos if d["estado"] == "aprobado"}
-    pendientes = {d["tipo"] for d in ctx.documentos if d["estado"] == "pendiente"}
+    pendientes = {d["tipo"] for d in ctx.documentos if d["estado"] == "pendiente"} - aprobados
     puntos = 15 * ("titularidad" in aprobados) + 10 * ("recibo_servicio" in aprobados)
     puntos += 4 * ("titularidad" in pendientes) + 2 * ("recibo_servicio" in pendientes)
     return ComponenteScore("Documentos", puntos, 25, f"{len(aprobados)} tipo(s) aprobado(s) por moderación")
@@ -141,9 +142,7 @@ class EvaluadorInmueble:
     def _normalizar(self, aviso: dict) -> dict:
         precio = normalizar_precio(aviso["precio"], aviso["moneda"], aviso["periodo"], aviso["area_m2"],
                                    tipo_cambio_vigente(self.db))
-        self.inmuebles.actualizar(aviso["id"], {"precio_mensual_pen": precio.mensual_pen,
-                                                "precio_m2_pen": precio.por_m2_pen})
-        return {**aviso, "precio_mensual_pen": precio.mensual_pen, "precio_m2_pen": precio.por_m2_pen}
+        return {"precio_mensual_pen": precio.mensual_pen, "precio_m2_pen": precio.por_m2_pen}
 
     def _muestra_precios(self, aviso: dict) -> list[float]:
         """Primero compara dentro del distrito; si hay pocos avisos usa toda la ciudad."""
@@ -166,7 +165,7 @@ class EvaluadorInmueble:
         aviso = self.inmuebles.detalle(inmueble_id)
         if aviso is None:
             raise LookupError(f"No existe el inmueble {inmueble_id}")
-        aviso = self._normalizar(aviso)
+        aviso.update(self._normalizar(aviso))
         imagenes = ImagenDAO(self.db).de_inmueble(inmueble_id)
         telefono = normalizar_telefono(aviso["telefono_contacto"])
         otros = self.db.execute(
@@ -193,6 +192,10 @@ class EvaluadorInmueble:
         )
 
     def evaluar(self, inmueble_id: int, notificar: bool = True) -> ResultadoEvaluacion:
+        with transaccion(self.db):
+            return self._evaluar(inmueble_id, notificar)
+
+    def _evaluar(self, inmueble_id: int, notificar: bool) -> ResultadoEvaluacion:
         anterior = self.inmuebles.obtener(inmueble_id)
         contexto = self.construir_contexto(inmueble_id)
         hallazgos = [h for detector in DETECTORES for h in detector.evaluar(contexto)]
@@ -208,39 +211,44 @@ class EvaluadorInmueble:
             recomendaciones=tuple(deduccion["recomendaciones"]),
             es_critico=deduccion["critico"],
         )
-        self._guardar(resultado, anterior, contexto)
+        if resultado.es_critico and contexto.inmueble["estado"] == "publicado":
+            contexto.inmueble["estado"] = "observado"
+        self._guardar(resultado, contexto)
         if notificar:
             publicar("inmueble_evaluado", conexion=self.db, resultado=resultado,
                      anterior=anterior, inmueble=contexto.inmueble)
         return resultado
 
-    def _guardar(self, resultado: ResultadoEvaluacion, anterior: dict, contexto: ContextoEvaluacion) -> None:
-        estado = anterior["estado"]
-        if resultado.es_critico and estado == "publicado":
-            estado = "observado"
+    def _guardar(self, resultado: ResultadoEvaluacion, contexto: ContextoEvaluacion) -> None:
+        aviso = contexto.inmueble
         self.inmuebles.actualizar(resultado.inmueble_id, {
-            "trust_score": resultado.trust_score, "nivel_riesgo": resultado.nivel.value, "estado": estado})
+            "trust_score": resultado.trust_score, "nivel_riesgo": resultado.nivel.value, "estado": aviso["estado"],
+            "precio_mensual_pen": aviso["precio_mensual_pen"], "precio_m2_pen": aviso["precio_m2_pen"]})
         previa = EvaluacionDAO(self.db).ultima(resultado.inmueble_id)
         hallazgos = json.dumps([{**asdict(h), "severidad": h.severidad.value} for h in resultado.hallazgos],
                                ensure_ascii=False)
         componentes = json.dumps([asdict(c) for c in resultado.componentes], ensure_ascii=False)
         patrones = json.dumps({"patrones": resultado.patrones, "recomendaciones": resultado.recomendaciones},
                               ensure_ascii=False)
-        if previa and previa["trust_score"] == resultado.trust_score and previa["hallazgos"] == hallazgos:
-            return  # sin cambios: no se llena el historial
-        EvaluacionDAO(self.db).insertar({
-            "inmueble_id": resultado.inmueble_id, "trust_score": resultado.trust_score,
-            "nivel": resultado.nivel.value, "componentes": componentes,
-            "hallazgos": hallazgos, "patrones": patrones})
+        datos = {"trust_score": resultado.trust_score, "nivel": resultado.nivel.value,
+                 "componentes": componentes, "hallazgos": hallazgos, "patrones": patrones}
+        if previa is None or any(previa[clave] != valor for clave, valor in datos.items()):
+            EvaluacionDAO(self.db).insertar({"inmueble_id": resultado.inmueble_id, **datos})
 
 
 def reevaluar_todos(conexion, notificar: bool = False) -> int:
     """Recalcula todos los avisos activos; se usa tras leer nuevas fuentes o moderar."""
     evaluador = EvaluadorInmueble(conexion)
-    filas = conexion.execute("SELECT id FROM inmuebles WHERE estado != 'retirado'").fetchall()
-    for fila in filas:
-        evaluador.evaluar(fila["id"], notificar=notificar)
-    return len(filas)
+    with transaccion(conexion):
+        avisos = [dict(fila) for fila in conexion.execute("SELECT * FROM inmuebles WHERE estado != 'retirado'")]
+        # Todos los comparables deben usar el mismo tipo de cambio antes de evaluarlos.
+        for aviso in avisos:
+            precios = evaluador._normalizar(aviso)
+            if any(aviso[clave] != valor for clave, valor in precios.items()):
+                evaluador.inmuebles.actualizar(aviso["id"], precios)
+        for aviso in avisos:
+            evaluador.evaluar(aviso["id"], notificar=notificar)
+    return len(avisos)
 
 
 def detalle_evaluacion(conexion, inmueble_id: int) -> dict | None:

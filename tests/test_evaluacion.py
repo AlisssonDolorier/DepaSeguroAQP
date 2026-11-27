@@ -30,6 +30,31 @@ def test_niveles(puntaje, nivel):
     assert NivelRiesgo.desde_puntaje(puntaje) is nivel
 
 
+def test_documentos_aprobados_no_acumulan_puntos_de_pendientes(db):
+    aviso = crear_aviso(db, crear_usuario(db, "documentos@prueba.test"))
+    for tipo in ("titularidad", "recibo_servicio"):
+        for estado in ("aprobado", "pendiente"):
+            DocumentoDAO(db).insertar({"inmueble_id": aviso, "tipo": tipo, "estado": estado,
+                                       "archivo": f"{tipo}-{estado}.pdf", "sha256": "prueba"})
+    componente = next(c for c in evaluar(db, aviso).componentes if c.nombre == "Documentos")
+    assert componente.obtenido == componente.maximo == 25
+
+
+def test_reevaluacion_usa_tipo_de_cambio_actual_en_todos_los_comparables(db):
+    dueno = crear_usuario(db, "dolares@prueba.test")
+    avisos = [crear_aviso(db, dueno, moneda="USD", precio=100) for _ in range(6)]
+    indicadores = IndicadorDAO(db)
+    indicadores.guardar("tipo_cambio_venta", "2026-01-01", 4, "prueba")
+    db.commit()
+    reevaluar_todos(db)
+    indicadores.guardar("tipo_cambio_venta", "2026-02-01", 2, "prueba")
+    db.commit()
+    reevaluar_todos(db)
+    for aviso in avisos:
+        evaluacion = detalle_evaluacion(db, aviso)
+        assert not any(h["hecho"].startswith("precio_") for h in evaluacion["hallazgos"])
+
+
 def test_fabrica_crea_la_subclase_correcta():
     base = {"id": 1, "nombre": "Ana Paz", "email": "a@b.c", "verificado": 1, "activo": 1}
     assert isinstance(fabrica_usuario({**base, "rol": "estudiante"}), Estudiante)
@@ -220,9 +245,48 @@ def test_verificador_detecta_aviso_peligroso(db):
     assert resultado["patrones"]
 
 
-def test_verificador_acepta_aviso_normal(db):
-    resultado = verificar(db, AvisoExterno("Cuarto con visita y contrato en Cayma.", telefono="987654321"))
-    assert resultado["puntaje"] == 100
+@pytest.mark.parametrize("texto", [
+    "Cuarto.",
+    "Cuarto con visita y contrato en Cayma.",
+    "Se acepta Yape después de firmar el contrato.",
+    "No transfieras antes de visitar. Puedes visitarlo hoy mismo.",
+    "No cobramos depósito para reservar. Puedes visitarlo mañana.",
+    "Paga por Yape después de la visita para reservar el cuarto.",
+    "No hay visitas hoy, puedes venir mañana.",
+    "Yapea S/. 450.50 después de la visita.",
+])
+def test_verificador_da_resultado_neutral_sin_evidencia(db, texto):
+    resultado = verificar(db, AvisoExterno(texto, telefono="987654321"))
+    assert resultado["nivel"] == "Información insuficiente"
+    assert resultado["hallazgos"] == []
+
+
+@pytest.mark.parametrize("texto,nivel,senal", [
+    ("Manda S/ 50 para separar.", "Precaución", "Pide dinero para reservar"),
+    ("Transfiéreme S/ 100 para reservar la habitación.", "Precaución", "Pide dinero para reservar"),
+    ("Cuarto con contrato. Transfiéreme ahora mismo.", "Precaución", "Pide un pago inmediato"),
+    ("Yapea S/ 50 ahora mismo.", "Precaución", "Pide un pago inmediato"),
+    ("Mándame 50 soles.", "Precaución", "Solicita un envío de dinero"),
+    ("Transfiéreme S/. 50.50 antes de visitar.", "Riesgo alto", "Pide dinero antes de la visita"),
+    ("Pásame S/ 80 y luego te envío la ubicación.", "Riesgo alto", "Pide dinero antes de la visita"),
+    ("Para enseñártelo tienes que abonar una garantía.", "Riesgo alto", "Pide dinero antes de la visita"),
+    ("Primero yapea S/ 80 y luego te muestro el cuarto.", "Riesgo alto", "Pide dinero antes de la visita"),
+    ("No se puede visitar el inmueble.", "Riesgo alto", "No permite visitar el lugar"),
+    ("Cuarto sin contrato.", "Precaución", "No ofrece contrato"),
+    ("Te enviamos la dirección. Te hago llegar la llave después del depósito.", "Crítico",
+     "Ofrece enviarte las llaves"),
+])
+def test_verificador_reconoce_distintas_formas_de_expresar_riesgo(db, texto, nivel, senal):
+    resultado = verificar(db, AvisoExterno(texto))
+    assert resultado["nivel"] == nivel
+    assert any(h["titulo"] == senal for h in resultado["hallazgos"])
+
+
+def test_verificador_unifica_el_pago_antes_de_visita_en_formulario_y_texto(db):
+    aviso = AvisoExterno("Paga el depósito antes de visitar.", pide_pago_previo=True)
+    resultado = verificar(db, aviso)
+    assert resultado["nivel"] == "Riesgo alto"
+    assert [h["titulo"] for h in resultado["hallazgos"]] == ["Pide dinero antes de la visita"]
 
 
 def test_verificador_reconoce_telefono_listado(db):

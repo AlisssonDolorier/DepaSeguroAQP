@@ -24,6 +24,7 @@
             <select name="ubigeo"><option value="">No lo sé</option>{% for d in distritos %}<option value="{{ d.ubigeo }}" {{ 'selected' if request.form.get('ubigeo') == d.ubigeo }}>{{ d.nombre|titulo }}</option>{% endfor %}</select>
           </label>
         </div>
+        <p class="nota">Para comparar el precio con otros avisos, indica el monto del alquiler en «Precio mensual».</p>
         <label>Foto del aviso (opcional) <input type="file" name="imagen" accept="image/jpeg,image/png,image/webp"></label>
         <label class="casilla"><input type="checkbox" name="pide_pago_previo" {{ 'checked' if request.form.get('pide_pago_previo') }}> Me piden dinero antes de visitar</label>
         <label class="casilla"><input type="checkbox" name="sin_contrato" {{ 'checked' if request.form.get('sin_contrato') }}> No me ofrecen contrato escrito</label>
@@ -34,14 +35,15 @@
     <aside class="lateral">
       {% if resultado %}
       <div class="caja" aria-live="polite">
-        <div class="puntaje">
-          <span class="puntaje-valor">{{ resultado.puntaje }}</span>
-          <div><span class="nota">Puntaje de seguridad</span><br><span class="insignia {{ resultado.nivel|nivel }}">{{ resultado.nivel }}</span></div>
-        </div>
-        <hr>
+        <h2>Resultado del análisis</h2>
+        <p><span class="insignia {{ resultado.nivel|nivel }}">{{ resultado.nivel }}</span></p>
+        {% if resultado.hallazgos %}
+        <h3>Señales detectadas</h3>
         {% for h in resultado.hallazgos %}
-        <div class="senal senal-alta"><b>{{ h.titulo }}</b><p>{{ h.detalle }}</p></div>
-        {% else %}<p>No se detectaron señales en lo que ingresaste.</p>{% endfor %}
+        <div class="senal senal-media"><b>{{ h.titulo }}</b><p>{{ h.detalle }}</p></div>
+        {% endfor %}
+        {% else %}<p>No se detectaron señales de riesgo en los datos ingresados.</p>{% endif %}
+        <p class="nota">El resultado se basa en los datos ingresados. Confirma la identidad de quien alquila y visita el inmueble antes de pagar.</p>
         {% if resultado.patrones %}<h3>Patrones deducidos</h3>{% for p in resultado.patrones %}<span class="chip">{{ p }}</span>{% endfor %}{% endif %}
         <h3>Recomendación</h3>
         <ul>{% for r in resultado.recomendaciones %}<li>{{ r }}</li>{% endfor %}</ul>
@@ -55,7 +57,7 @@
           <li>Teléfonos con casos confirmados</li>
           <li>Fotos repetidas mediante huellas digitales</li>
         </ul>
-        <p class="nota">Un buen puntaje no garantiza que el aviso sea real. Siempre visita el lugar.</p>
+        <p class="nota">Si conoces el precio, el distrito o el teléfono, agrégalos para ampliar el análisis.</p>
       </div>
       {% endif %}
     </aside>

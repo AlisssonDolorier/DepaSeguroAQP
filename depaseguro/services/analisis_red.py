@@ -77,11 +77,11 @@ def detectar_redes(conexion) -> list[dict]:
 
     redes = []
     for raiz, ids in componentes.items():
-        cuentas = {avisos[i]["arrendador"] for i in ids}
-        if len(ids) >= 2 and len(cuentas) >= 2:
+        cuentas = {avisos[i]["arrendador_id"]: avisos[i]["arrendador"] for i in ids}
+        if len(cuentas) >= 2:
             redes.append({
                 "avisos": [avisos[i] for i in sorted(ids)],
-                "cuentas": sorted(cuentas),
+                "cuentas": sorted(cuentas.values()),
                 "motivos": sorted(motivos_por_raiz[raiz]),
             })
     return sorted(redes, key=lambda red: len(red["avisos"]), reverse=True)
@@ -112,8 +112,9 @@ def ranking_zonas(conexion, meses: int = 12) -> list[dict]:
     poblacion = pd.read_sql_query("SELECT ubigeo, poblacion FROM distritos", conexion)
     resumen = resumen.merge(poblacion, on="ubigeo", how="left")
     resumen["patrimonio"] = resumen[list(MODALIDADES_PATRIMONIO)].sum(axis=1)
-    resumen["tasa_estafa"] = (resumen["Estafa"] / resumen["poblacion"] * 10000).round(1)
-    resumen["tasa_patrimonio"] = (resumen["patrimonio"] / resumen["poblacion"] * 10000).round(1)
+    poblacion_valida = resumen["poblacion"].where(resumen["poblacion"] > 0)
+    resumen["tasa_estafa"] = (resumen["Estafa"] / poblacion_valida * 10000).round(1)
+    resumen["tasa_patrimonio"] = (resumen["patrimonio"] / poblacion_valida * 10000).round(1)
     resumen = resumen.sort_values("Estafa", ascending=False)
     filas = resumen.astype(object).where(resumen.notna(), None).to_dict("records")
     return [{**fila, "distrito": fila["distrito"].title()} for fila in filas]

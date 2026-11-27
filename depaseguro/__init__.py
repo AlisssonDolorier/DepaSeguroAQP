@@ -72,5 +72,6 @@ def create_app(configuracion: dict | None = None) -> Flask:
     es_proceso_recargado = os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug
     if app.config["INGESTA_AUTOMATICA"] and not app.config["TESTING"] and es_proceso_recargado:
         logging.basicConfig(level=logging.INFO)
-        Planificador(app.config["DB_PATH"], app.config["INGESTA_INTERVALO_HORAS"]).start()
+        Planificador(app.config["DB_PATH"], app.config["INGESTA_INTERVALO_HORAS"],
+                     geocodificar=app.config["GEOCODIFICAR"]).start()
     return app

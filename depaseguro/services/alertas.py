@@ -40,7 +40,7 @@ def alertar_seguidores(conexion, resultado: ResultadoEvaluacion, anterior: dict,
 @suscribir("inmueble_evaluado")
 def alertar_busquedas(conexion, resultado: ResultadoEvaluacion, anterior: dict, inmueble: dict) -> None:
     """Avisa a estudiantes con una búsqueda guardada que coincide con el aviso."""
-    if inmueble["estado"] != "publicado" or inmueble.get("lat") is None:
+    if inmueble["estado"] != "publicado" or inmueble.get("lat") is None or inmueble.get("lon") is None:
         return
     alertas = AlertaDAO(conexion)
     for busqueda in BusquedaGuardadaDAO(conexion).todas():

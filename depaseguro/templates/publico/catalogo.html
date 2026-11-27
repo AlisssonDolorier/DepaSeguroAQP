@@ -18,10 +18,14 @@
         <label>Radio máximo (km)
           <input type="number" name="radio_km" min="0.2" step="0.1" value="{{ filtros.radio_km or '' }}" placeholder="2">
         </label>
-        <label>Distrito
+        <label>Zona o distrito
           <select name="ubigeo">
-            <option value="">Todos</option>
-            {% for d in distritos %}<option value="{{ d.ubigeo }}" {{ 'selected' if filtros.ubigeo == d.ubigeo }}>{{ d.nombre|titulo }}</option>{% endfor %}
+            <option value="">Todas las zonas</option>
+            {% for zona in zonas %}
+            <option value="{{ zona.ubigeo }}" {{ 'selected' if filtros.ubigeo == zona.ubigeo }}>
+              {{ 'Cercado de Arequipa' if zona.ubigeo == '040101' else zona.nombre|titulo }} ({{ zona.avisos }})
+            </option>
+            {% endfor %}
           </select>
         </label>
         <label>Tipo
@@ -31,10 +35,7 @@
           </select>
         </label>
         <label>Precio máximo mensual (S/)
-          <input type="number" name="precio_max" min="1" step="10" value="{{ filtros.precio_max|int if filtros.precio_max else '' }}">
-        </label>
-        <label>Trust Score mínimo
-          <input type="number" name="trust_min" min="0" max="100" value="{{ filtros.trust_min if filtros.trust_min is not none else '' }}">
+          <input type="number" name="precio_max" min="1" step="1" value="{{ filtros.precio_max|int if filtros.precio_max else '' }}" placeholder="500">
         </label>
         <label>Ordenar por
           <select name="orden">

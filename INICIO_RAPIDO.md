@@ -2,7 +2,9 @@
 
 El respaldo SQLite con datos ficticios esta en data/depaseguro.db.
 Las imagenes y los documentos de demostracion estan en data/uploads.
-Conserva estas carpetas al descomprimir el ZIP.
+Conserva estas carpetas al descomprimir el ZIP. Para una copia descargada desde el código de GitHub, genera los datos de demostración después de instalar las dependencias y antes de iniciar el servidor:
+
+    .\.venv\Scripts\python.exe -m scripts.poblar_demo
 
 En PowerShell, desde la carpeta DepaSeguroAQP, ejecuta:
 

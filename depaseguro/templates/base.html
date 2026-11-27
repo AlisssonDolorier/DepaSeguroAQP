@@ -27,9 +27,11 @@
       <a href="{{ url_for('publico.blog') }}">Guías</a>
       {% if usuario %}
         <a class="menu-cuenta" href="{{ url_for(usuario.panel_inicio()) }}">
-          <span class="avatar">{{ usuario.iniciales }}</span> Mi panel
+          {% if usuario.foto_perfil %}<img class="avatar" src="{{ url_for('auth.foto_perfil') }}" alt="">
+          {% else %}<span class="avatar">{{ usuario.iniciales }}</span>{% endif %} Mi panel
           {% if alertas_sin_leer %}<span class="contador">{{ alertas_sin_leer }}</span>{% endif %}
         </a>
+        <a href="{{ url_for('auth.perfil') }}">Mi perfil</a>
         <form method="post" action="{{ url_for('auth.logout') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="enlace" type="submit">Salir</button>

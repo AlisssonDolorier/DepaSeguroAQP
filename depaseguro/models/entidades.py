@@ -36,13 +36,14 @@ class Usuario(ABC):
     rol = "usuario"
 
     def __init__(self, id: int, nombre: str, email: str, verificado: bool = False, activo: bool = True,
-                 telefono: str | None = None) -> None:
+                 telefono: str | None = None, foto_perfil: str | None = None) -> None:
         self.id = id
         self.nombre = nombre
         self.email = email
         self.verificado = bool(verificado)
         self.activo = bool(activo)
         self.telefono = telefono
+        self.foto_perfil = foto_perfil
 
     @abstractmethod
     def permisos(self) -> frozenset[str]:
@@ -98,7 +99,7 @@ def fabrica_usuario(fila) -> Usuario:
     datos = dict(fila)
     clase = _ROLES[datos["rol"]]
     return clase(datos["id"], datos["nombre"], datos["email"], datos["verificado"], datos["activo"],
-                 datos.get("telefono"))
+                 datos.get("telefono"), datos.get("foto_perfil"))
 
 
 @dataclass(frozen=True)

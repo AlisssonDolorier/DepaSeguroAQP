@@ -24,7 +24,7 @@
         <p class="aviso-meta">Adelanto: {{ aviso.adelanto_meses }} mes(es) · Garantía: {{ aviso.garantia_meses }} mes(es) · Contrato escrito: {{ 'Sí' if aviso.contrato_escrito else 'No' }}</p>
         {% for servicio in servicios %}<span class="chip">{{ servicio }}</span>{% endfor %}
       </div>
-      {% if aviso.lat is not none %}<div id="mapa-punto" class="mini-mapa"></div>{% endif %}
+      {% if aviso.lat is not none and aviso.lon is not none %}<div id="mapa-punto" class="mini-mapa"></div>{% endif %}
 
       {% if campus %}
       <div class="caja">
@@ -138,7 +138,7 @@
 </section>
 {% endblock %}
 {% block scripts %}
-{% if aviso.lat is not none %}
+{% if aviso.lat is not none and aviso.lon is not none %}
 <script src="{{ url_for('static', filename='vendor/leaflet.js') }}"></script>
 <script>addEventListener('DOMContentLoaded', () => iniciarMapaPunto('mapa-punto', {{ aviso.lat }}, {{ aviso.lon }}));</script>
 {% endif %}

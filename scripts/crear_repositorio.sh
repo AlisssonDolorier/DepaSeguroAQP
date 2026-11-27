@@ -2,7 +2,10 @@
 # Crea el historial Git por componentes, con ramas main, develop y feature/*.
 set -e
 TRAILER="Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-rm -rf .git
+if [ -e .git ] || git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  printf '%s\n' 'La carpeta ya pertenece a un repositorio. Usa una copia sin historial.'
+  exit 1
+fi
 git init -q -b main
 git config user.name "Grupo 08 DepaSeguro AQP"
 git config user.email "grupo08.depaseguro@example.com"
@@ -18,7 +21,7 @@ fusionar() {
   git merge -q --no-ff "$1" -m "Merge $1 en develop" -m "$TRAILER"
 }
 
-git add .gitignore README.md requirements.txt pytest.ini
+git add .gitignore README.md INICIO_RAPIDO.md requirements.txt requirements-docs.txt pytest.ini
 commit "chore: estructura inicial del proyecto"
 git switch -q -c develop
 
@@ -57,4 +60,6 @@ git add scripts docs
 commit "docs: diagramas, capturas, incidencias y scripts de apoyo"
 fusionar feature/documentacion
 
+git switch -q main
+git merge -q --ff-only develop
 git branch --list

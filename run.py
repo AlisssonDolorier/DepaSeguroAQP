@@ -16,7 +16,7 @@ def main() -> None:
     if "--ingesta" in sys.argv:
         app = create_app({"INGESTA_AUTOMATICA": False})
         conexion = conectar(app.config["DB_PATH"])
-        for resultado in ejecutar_ingesta(conexion):
+        for resultado in ejecutar_ingesta(conexion, geocodificar=app.config["GEOCODIFICAR"]):
             print(f"{resultado['fuente']:<22} {resultado['estado']:<12} {resultado['registros']:>7}  {resultado['mensaje']}")
         conexion.close()
         return

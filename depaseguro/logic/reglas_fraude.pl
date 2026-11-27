@@ -30,13 +30,15 @@ critico(I) :- patron(I, P), patron(I, Q), P \= Q.
 requiere_revision(I) :- patron(I, _).
 requiere_revision(I) :- reportes_multiples(I).
 
-confiable(I) :- documentos_aprobados(I), arrendador_verificado(I), \+ patron(I, _), \+ reporte_abierto(I).
+confiable(I) :- documentos_aprobados(I), arrendador_verificado(I), \+ requiere_revision(I), \+ reporte_abierto(I), \+ critico(I).
 
 % --- Recomendaciones para el estudiante -----------------------------------------
 recomendacion(I, no_transferir) :- critico(I).
 recomendacion(I, no_transferir) :- pago_previo(I).
 recomendacion(I, visitar_antes) :- requiere_revision(I).
 recomendacion(I, visitar_antes) :- sin_documentos(I).
+recomendacion(I, visitar_antes) :- pago_inmediato(I).
+recomendacion(I, visitar_antes) :- pago_reserva(I).
 recomendacion(I, exigir_contrato) :- sin_contrato(I).
 recomendacion(I, buscar_alternativas) :- critico(I).
 recomendacion(I, continuar_con_visita) :- confiable(I).

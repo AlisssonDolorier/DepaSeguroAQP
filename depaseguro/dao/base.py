@@ -2,11 +2,38 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from flask import current_app, g
 
 ESQUEMA = Path(__file__).resolve().parents[2] / "database" / "schema.sql"
+
+
+_transacciones_activas = ContextVar("transacciones_activas", default=())
+
+
+@contextmanager
+def transaccion(conexion: sqlite3.Connection):
+    """Agrupa escrituras de varios DAO en una transacción SQLite."""
+    activas = _transacciones_activas.get()
+    if conexion in activas:
+        yield
+        return
+    token = _transacciones_activas.set((*activas, conexion))
+    try:
+        with conexion:
+            if not conexion.in_transaction:
+                conexion.execute("BEGIN IMMEDIATE")
+            yield
+    finally:
+        _transacciones_activas.reset(token)
+
+
+def confirmar(conexion: sqlite3.Connection) -> None:
+    if conexion not in _transacciones_activas.get():
+        conexion.commit()
 
 
 def conectar(ruta: str | Path) -> sqlite3.Connection:
@@ -33,6 +60,10 @@ def cerrar_db(_error=None) -> None:
 
 def crear_esquema(conexion: sqlite3.Connection) -> None:
     conexion.executescript(ESQUEMA.read_text(encoding="utf-8"))
+    # CREATE TABLE IF NOT EXISTS no agrega columnas a instalaciones existentes.
+    columnas_usuario = {fila[1] for fila in conexion.execute("PRAGMA table_info(usuarios)")}
+    if "foto_perfil" not in columnas_usuario:
+        conexion.execute("ALTER TABLE usuarios ADD COLUMN foto_perfil TEXT")
     conexion.commit()
 
 
@@ -73,7 +104,7 @@ class BaseDAO:
         cursor = self.db.execute(
             f"INSERT INTO {self.tabla} ({columnas}) VALUES ({marcas})", tuple(limpio.values())
         )
-        self.db.commit()
+        confirmar(self.db)
         return cursor.lastrowid
 
     def actualizar(self, identificador, datos: dict) -> None:
@@ -85,11 +116,11 @@ class BaseDAO:
             f"UPDATE {self.tabla} SET {asignaciones} WHERE {self.clave} = ?",
             (*limpio.values(), identificador),
         )
-        self.db.commit()
+        confirmar(self.db)
 
     def eliminar(self, identificador) -> None:
         self.db.execute(f"DELETE FROM {self.tabla} WHERE {self.clave} = ?", (identificador,))
-        self.db.commit()
+        confirmar(self.db)
 
     def contar(self, condicion: str = "1=1", parametros: tuple = ()) -> int:
         return self.db.execute(

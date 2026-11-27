@@ -4,7 +4,10 @@
 {% block contenido %}
 <section class="seccion">
   <div class="contenedor">
-    <h1>Hola, {{ usuario.nombre.split()[0] }}</h1>
+    <div class="panel-cabecera">
+      <div><p class="etiqueta">Panel de estudiante</p><h1>Hola, {{ usuario.nombre.split()[0] }}</h1></div>
+      <a class="boton boton-sec" href="{{ url_for('auth.perfil') }}">Editar mi perfil</a>
+    </div>
     <div class="rejilla rejilla-2">
       <div class="caja">
         <h2>Mis alertas</h2>

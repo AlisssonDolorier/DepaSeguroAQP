@@ -5,7 +5,7 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 
 from ..dao.base import obtener_db
 from ..dao.repositorios import DistritoDAO, DocumentoDAO, InmuebleDAO, ReporteDAO
-from ..services.evaluador import EvaluadorInmueble, detalle_evaluacion
+from ..services.evaluador import detalle_evaluacion
 from ..services.gestion import (SERVICIOS, crear_aviso, editar_aviso, eliminar_aviso, generar_codigo_visita,
                                 guardar_documento, responder_reporte)
 from .utilidades import requiere_rol
@@ -78,8 +78,7 @@ def eliminar(inmueble_id: int):
 def documento(inmueble_id: int):
     db = obtener_db()
     _aviso_propio(inmueble_id)
-    guardar_documento(db, inmueble_id, request.form.get("tipo", ""), request.files["archivo"])
-    EvaluadorInmueble(db).evaluar(inmueble_id)
+    guardar_documento(db, inmueble_id, request.form.get("tipo", ""), request.files.get("archivo"))
     flash("Documento enviado a revisión.", "ok")
     return redirect(url_for("arrendador.gestionar", inmueble_id=inmueble_id))
 

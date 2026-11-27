@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+from collections import defaultdict
 from datetime import datetime
 from xml.sax.saxutils import escape
 
@@ -112,13 +113,18 @@ def pdf_ficha_inmueble(db, inmueble_id: int) -> bytes:
     e = _estilos()
     aviso = InmuebleDAO(db).detalle(inmueble_id)
     evaluacion = detalle_evaluacion(db, inmueble_id)
+    mensual, precio_m2 = aviso["precio_mensual_pen"], aviso["precio_m2_pen"]
+    precio = "Sin evaluar" if mensual is None or precio_m2 is None else (
+        f"S/ {mensual:.2f} al mes (S/ {precio_m2:.2f} por m²)")
+    confianza = "Sin evaluar" if aviso["trust_score"] is None else (
+        f"{aviso['trust_score']} / 100 ({aviso['nivel_riesgo']})")
     elementos = [_tabla([
         ["Dato", "Valor"],
         ["Tipo", TIPOS.get(aviso["tipo"], aviso["tipo"])],
         ["Distrito", aviso["distrito"].title()],
         ["Dirección", aviso["direccion"]],
-        ["Precio normalizado", f"S/ {aviso['precio_mensual_pen']:.2f} al mes (S/ {aviso['precio_m2_pen']:.2f} por m²)"],
-        ["Trust Score", f"{aviso['trust_score']} / 100 ({aviso['nivel_riesgo']})"],
+        ["Precio normalizado", precio],
+        ["Trust Score", confianza],
     ], [5 * cm, 12 * cm])]
     if evaluacion:
         elementos.append(Paragraph("Composición del puntaje", e["h2"]))
@@ -186,7 +192,9 @@ def pdf_expediente(db, reporte_id: int) -> bytes:
 def pdf_contrato(datos: dict) -> bytes:
     """Modelo referencial de contrato de arrendamiento para vivienda estudiantil."""
     e = _estilos()
-    limpio = {clave: escape(str(valor or "__________")) for clave, valor in datos.items()}
+    limpio = defaultdict(lambda: "__________", {
+        clave: escape(str(valor)) for clave, valor in datos.items() if valor is not None and str(valor).strip()
+    })
     clausulas = [
         ("PRIMERA - Partes", f"Conste por el presente documento el contrato de arrendamiento que celebran "
          f"{limpio['arrendador']}, identificado(a) con documento {limpio['doc_arrendador']}, como ARRENDADOR(A); y "
@@ -231,6 +239,9 @@ def excel_catalogo(db) -> bytes:
             libro, sheet_name="Reportes", index=False)
         for hoja in libro.sheets.values():
             for columna in hoja.columns:
+                for celda in columna:
+                    if celda.data_type == "f":
+                        celda.data_type = "s"
                 ancho = max((len(str(celda.value)) for celda in columna if celda.value is not None), default=8)
                 hoja.column_dimensions[columna[0].column_letter].width = min(ancho + 2, 45)
     return salida.getvalue()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import math
 from pathlib import Path
 
 from flask import (Blueprint, abort, current_app, flash, g, redirect, render_template, request, send_file,
@@ -11,11 +12,12 @@ from ..dao.base import obtener_db
 from ..dao.repositorios import (BlogDAO, CampusDAO, ContactoDAO, DistritoDAO, EvaluacionDAO, FavoritoDAO, FuenteDAO,
                                 ImagenDAO, IndicadorDAO, InmuebleDAO, ResenaDAO)
 from ..services import analisis_red, reportes
-from ..services.analitica import analizar_clausulas
+from ..services.analitica import ImagenInvalida, analizar_clausulas
 from ..services.busqueda import FiltrosBusqueda, buscar, campus_cercanos
 from ..services.evaluador import detalle_evaluacion, tipo_cambio_vigente
 from ..services.gestion import ErrorNegocio
 from ..services.verificador import AvisoExterno, verificar
+from .utilidades import volver_a
 
 bp = Blueprint("publico", __name__)
 
@@ -23,9 +25,10 @@ bp = Blueprint("publico", __name__)
 def _decimal(nombre: str) -> float | None:
     valor = request.values.get(nombre, "").strip().replace(",", ".")
     try:
-        return float(valor) if valor else None
+        numero = float(valor)
     except ValueError:
         return None
+    return numero if math.isfinite(numero) and numero > 0 else None
 
 
 def _campus_elegido(db) -> dict | None:
@@ -57,10 +60,11 @@ def catalogo():
     db = obtener_db()
     filtros = FiltrosBusqueda(
         ubigeo=request.args.get("ubigeo") or None, tipo=request.args.get("tipo") or None,
-        precio_max=_decimal("precio_max"), trust_min=request.args.get("trust_min", type=int),
+        precio_max=_decimal("precio_max"),
         campus=_campus_elegido(db), radio_km=_decimal("radio_km"), orden=request.args.get("orden", "compatibilidad"))
     avisos = buscar(InmuebleDAO(db).publicados(), filtros)
-    return render_template("publico/catalogo.html", avisos=avisos, filtros=filtros, distritos=DistritoDAO(db).todos(),
+    return render_template("publico/catalogo.html", avisos=avisos, filtros=filtros,
+                           zonas=DistritoDAO(db).con_avisos_publicos(),
                            campus=CampusDAO(db).todos())
 
 
@@ -95,6 +99,11 @@ def ficha_pdf(inmueble_id: int):
 
 @bp.route("/media/<path:archivo>")
 def media(archivo: str):
+    aviso = ImagenDAO(obtener_db()).aviso_de_archivo(archivo)
+    autorizado = g.usuario is not None and aviso is not None and (
+        g.usuario.rol == "admin" or g.usuario.id == aviso["arrendador_id"])
+    if aviso is None or (aviso["estado"] not in ("publicado", "observado") and not autorizado):
+        abort(404)
     return send_from_directory(Path(current_app.config["UPLOAD_IMAGENES"]), archivo)
 
 
@@ -113,12 +122,19 @@ def verificador():
             texto=request.form.get("texto", ""), precio_mensual=_decimal("precio_mensual"), area_m2=_decimal("area_m2"),
             tipo=request.form.get("tipo", "cuarto"), ubigeo=request.form.get("ubigeo") or None,
             telefono=request.form.get("telefono", ""), pide_pago_previo=bool(request.form.get("pide_pago_previo")),
-            tiene_contrato=not request.form.get("sin_contrato"), permite_visita=not request.form.get("sin_visita"),
+            tiene_contrato=False if request.form.get("sin_contrato") else None,
+            permite_visita=False if request.form.get("sin_visita") else None,
             imagen=imagen.read() if imagen and imagen.filename else None)
-        try:
-            resultado = verificar(db, aviso, g.usuario.id if g.usuario else None)
-        except Exception:
-            flash("No pudimos leer la imagen. Usa un archivo JPG, PNG o WEBP.", "error")
+        if not aviso.texto.strip():
+            flash("Escribe el texto del aviso para analizarlo.", "error")
+        elif any(request.form.get(campo, "").strip() and _decimal(campo) is None
+                 for campo in ("precio_mensual", "area_m2")):
+            flash("El precio y el área deben ser números positivos.", "error")
+        else:
+            try:
+                resultado = verificar(db, aviso, g.usuario.id if g.usuario else None)
+            except ImagenInvalida:
+                flash("No pudimos leer la imagen. Usa un archivo JPG, PNG o WEBP.", "error")
     return render_template("publico/verificador.html", resultado=resultado, distritos=DistritoDAO(db).todos())
 
 
@@ -147,7 +163,7 @@ def contrato():
             flash("Pega el texto del contrato para analizarlo.", "error")
         else:
             analisis = analizar_clausulas(texto)
-    elif request.method == "POST":
+    elif request.method == "POST" and request.form.get("accion") == "generar":
         pdf = reportes.pdf_contrato(request.form.to_dict())
         return send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True,
                          download_name="contrato-modelo-depaseguro.pdf")
@@ -194,4 +210,4 @@ def contacto():
 @bp.app_errorhandler(ErrorNegocio)
 def error_negocio(error: ErrorNegocio):
     flash(str(error), "error")
-    return redirect(request.referrer or url_for("publico.inicio"))
+    return volver_a("publico.inicio")
